@@ -31,7 +31,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: alandtse/CommonLibVR
-          ref: v7.1.0   # the version IDRC 8.x is built against; the ng branch HEAD (11.x) breaks the build
+          ref: v8.2.0   # first release with the latent-function fix IDRC 8.2 needs (plugin.cpp); 11.x HEAD is untested
           path: CommonLibSSE-NG
           submodules: recursive
 
