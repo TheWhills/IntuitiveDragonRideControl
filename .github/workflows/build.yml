@@ -1,0 +1,81 @@
+name: Build SKSE plugin
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      VCPKG_ROOT: ${{ github.workspace }}\vcpkg
+      CommonLibSSEPath_NG: ${{ github.workspace }}\CommonLibSSE-NG
+      CLibUtilsPath: ${{ github.workspace }}\CLibUtil
+      VCPKG_BINARY_SOURCES: clear;x-gha,readwrite
+
+    steps:
+      # CMakeLists.txt expects TS_SKSEFunctions in a sibling folder named TS_SKSEFunctions-main
+      - uses: actions/checkout@v4
+        with:
+          path: IntuitiveDragonRideControl-main
+
+      - uses: actions/checkout@v4
+        with:
+          repository: staalo18/TS_SKSEFunctions
+          path: TS_SKSEFunctions-main
+
+      - uses: actions/checkout@v4
+        with:
+          repository: alandtse/CommonLibVR
+          ref: ng
+          path: CommonLibSSE-NG
+          submodules: recursive
+
+      - uses: actions/checkout@v4
+        with:
+          repository: powerof3/CLIBUtil
+          path: CLibUtil
+
+      - uses: actions/checkout@v4
+        with:
+          repository: microsoft/vcpkg
+          path: vcpkg
+          fetch-depth: 0   # the manifest pins a vcpkg baseline commit, which needs history
+
+      - name: Bootstrap vcpkg
+        run: .\vcpkg\bootstrap-vcpkg.bat -disableMetrics
+
+      # Lets vcpkg cache built dependencies between runs (x-gha binary source)
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Point output folder at the workspace
+        working-directory: IntuitiveDragonRideControl-main
+        run: |
+          $out = ("${{ github.workspace }}\out\IDRC Freeform") -replace '\\', '/'
+          (Get-Content CMakeLists.txt) -replace 'set\(OUTPUT_FOLDER ".*"\)', "set(OUTPUT_FOLDER `"$out`")" | Set-Content CMakeLists.txt
+
+      - name: Configure
+        working-directory: IntuitiveDragonRideControl-main
+        run: cmake --preset release
+
+      - name: Build
+        working-directory: IntuitiveDragonRideControl-main
+        run: cmake --build build/release
+
+      # The MCM script (.pex) is NOT compiled here: Bethesda's Papyrus compiler only ships with the
+      # Creation Kit. Compile _ts_DR_MCMConfig.psc locally (build-idrc-freeform.ps1 step 5).
+      - uses: actions/upload-artifact@v4
+        with:
+          name: IDRC-Freeform-${{ github.sha }}
+          path: out/IDRC Freeform
