@@ -35,6 +35,13 @@ namespace IDRC {
         bool IsFastTravelAttack() { return m_isFastTravelAttack; }
 
         void SetFastTravelAttack(bool a_value) { m_isFastTravelAttack = a_value; }
+
+        // [freeform-breath] true while a commanded attack is running in freeform mode (no actor target)
+        bool IsFreeformShoutActive() const { return m_shoutActive && m_isFreeformShout; }
+
+        // [freeform-breath] world-space point the camera is aiming at, kFreeformAimDistance ahead of the camera
+        RE::NiPoint3 GetFreeformAimPoint() const;
+
     private:
         CombatManager() = default;
         ~CombatManager() = default;
@@ -52,6 +59,20 @@ namespace IDRC {
         RE::ActorHandle m_shoutTarget{};
         RE::ActorHandle m_storedCombatTarget{};
         int m_storedCombatTargetState = 0;
+
+        // [freeform-breath]
+        // Distance from the camera to the synthetic aim point. Far enough that the parallax between
+        // the camera and the dragon's head is small, close enough to stay inside the loaded area.
+        static constexpr float kFreeformAimDistance = 4000.0f;
+        // false = only the head/neck tracks the aim point; true = also feed it to the pathing look-at,
+        // which can make the dragon's body turn toward it (may fight IDRC's flight steering).
+        static constexpr bool kFreeformTurnBody = false;
+        bool m_isFreeformShout = false;
+        RE::ObjectRefHandle m_freeformMarker{};
+
+        RE::TESObjectREFR* GetOrCreateFreeformMarker();
+        void UpdateFreeformMarker();
+        void ReleaseFreeformMarker();
 
         RE::TESShout* GetShout(float a_targetDistance);
 

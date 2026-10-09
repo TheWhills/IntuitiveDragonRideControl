@@ -9,7 +9,8 @@ namespace IDRC {
             enum TargetMode : std::uint32_t {
                 kNone = 0,
                 kSelectedActor = 1,
-                kCombatTarget = 2
+                kCombatTarget = 2,
+                kFreeform = 3   // [freeform-breath] no actor targeting; attacks aim where the camera points
             };
 
             enum ReticleMode : std::uint32_t {
@@ -43,6 +44,9 @@ namespace IDRC {
             void ToggleLockReticle();
 
             void TogglePrimaryTargetMode();
+
+            // [freeform-breath] true when the MCM "Primary Target" option is set to "Freeform (Camera Aim)"
+            bool IsFreeformMode() const { return m_primaryTargetMode == TargetMode::kFreeform; }
 
             void DisposeReticle();
 

@@ -92,6 +92,17 @@ namespace IDRC {
             return;
         }
 
+        // [freeform-breath] No actor is ever targeted in freeform mode, so never show the reticle.
+        // A deliberate TDM target lock still shows TDM's own lock indicator.
+        if (IsFreeformMode()) {
+            if (m_reticleTarget || m_isWidgetActive) {
+                DisposeReticle();
+            }
+            m_reticleTarget = RE::ActorHandle{};
+            m_isReticleLocked = false;
+            return;
+        }
+
         RE::Actor* newTarget = nullptr;
         bool hasTDMTarget = false;
 
@@ -193,6 +204,11 @@ namespace IDRC {
     }
 
     RE::ActorHandle TargetReticleManager::GetCurrentTarget() const {
+        // [freeform-breath] never hand an actor to the attack code in freeform mode
+        if (IsFreeformMode()) {
+            return RE::ActorHandle{};
+        }
+
         if (m_reticleTarget) {
             return m_reticleTarget;
         }
@@ -392,12 +408,16 @@ namespace IDRC {
             m_primaryTargetMode = TargetMode::kSelectedActor;
             RE::SendHUDMessage::ShowHUDMessage("Primary target: picked from screen center.");
         } else if (m_primaryTargetMode == TargetMode::kSelectedActor) {
+            m_primaryTargetMode = TargetMode::kFreeform;
+            RE::SendHUDMessage::ShowHUDMessage("Primary target: none - freeform camera aim.");
+        } else if (m_primaryTargetMode == TargetMode::kFreeform) {
+            // [freeform-breath] cycle: combat target -> screen center -> freeform -> combat target
             m_primaryTargetMode = TargetMode::kCombatTarget;
             RE::SendHUDMessage::ShowHUDMessage("Primary target: the dragon's current combat target.");
         } else {
             m_primaryTargetMode = TargetMode::kSelectedActor;
         }
-    }    
+    }
 
     void TargetReticleManager::DisposeReticle() {
         if (!APIs::TrueHUD) {

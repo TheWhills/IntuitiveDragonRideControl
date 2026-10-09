@@ -1036,6 +1036,19 @@ log::info("{}: BuildFlyLandPath called, result={}", __FUNCTION__, result ? "true
 
 				auto shoutTargetPos = shoutTarget->GetPosition();
 				a_data.angleX = -_ts_SKSEFunctions::GetAngleX(shoutOrigin, shoutTargetPos);
+			} else if (IDRC::CombatManager::GetSingleton().IsFreeformShoutActive()) {
+				// [freeform-breath] No target: launch along the camera's aim line, from the dragon's head.
+				// Sets both pitch and heading, since there is no target for the vanilla aiming to use.
+				auto shoutOrigin = a_data.origin;
+				RE::NiAVObject* reference3D = _ts_SKSEFunctions::GetTargetPoint(dragonActor, RE::BGSBodyPartDefs::LIMB_ENUM::kHead).get();
+				if (reference3D) {
+					shoutOrigin = reference3D->world.translate;
+				}
+
+				auto aimPoint = IDRC::CombatManager::GetSingleton().GetFreeformAimPoint();
+				a_data.angleX = -_ts_SKSEFunctions::GetAngleX(shoutOrigin, aimPoint);
+				a_data.angleZ = _ts_SKSEFunctions::GetAngleZ(shoutOrigin, aimPoint);
+				a_data.desiredTarget = nullptr;
 			}
 		}
 

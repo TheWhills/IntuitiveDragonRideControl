@@ -82,13 +82,97 @@ namespace IDRC {
         }
 
         if (!DataManager::GetSingleton().GetDragonActor()) {
+            // [freeform-breath] dismounted mid-shout: drop the aim marker so it isn't left in the save
+            if (m_isFreeformShout || m_freeformMarker) {
+                m_isFreeformShout = false;
+                SKSE::GetTaskInterface()->AddTask([this]() { this->ReleaseFreeformMarker(); });
+            }
             return;
         }
 
         UpdateCombat();
 
         UpdateAttack();
+
+        // [freeform-breath] keep the look-at marker on the camera's aim point for the whole
+        // shout, so the head (and a flame breath coming out of it) follows the camera while it runs.
+        if (IsFreeformShoutActive()) {
+            SKSE::GetTaskInterface()->AddTask([this]() {
+                // When modifying Game objects, send task to TaskInterface to ensure thread safety
+                this->UpdateFreeformMarker();
+            });
+        }
     }
+
+    /******************************************************************************************/
+    // [freeform-breath] helpers
+
+    RE::NiPoint3 CombatManager::GetFreeformAimPoint() const {
+        auto* playerCamera = RE::PlayerCamera::GetSingleton();
+        if (!playerCamera || !playerCamera->cameraRoot) {
+            auto* dragonActor = DataManager::GetSingleton().GetDragonActor();
+            return dragonActor ? dragonActor->GetPosition() : RE::NiPoint3{};
+        }
+
+        const auto& worldTransform = playerCamera->cameraRoot->world;
+        // same forward-vector math as TargetReticleManager::GetSelectedActor()
+        RE::NiPoint3 cameraForward = worldTransform.rotate * RE::NiPoint3{ 0.0f, 1.0f, 0.0f };
+        float length = cameraForward.Length();
+        if (length > 0.0f) {
+            cameraForward /= length;
+        }
+
+        return worldTransform.translate + cameraForward * kFreeformAimDistance;
+    }
+
+    RE::TESObjectREFR* CombatManager::GetOrCreateFreeformMarker() {
+        // must run on the main thread (called from TaskInterface tasks only)
+        if (m_freeformMarker) {
+            if (auto ref = m_freeformMarker.get()) {
+                return ref.get();
+            }
+        }
+
+        auto* player = RE::PlayerCharacter::GetSingleton();
+        auto* xMarker = RE::TESForm::LookupByID<RE::TESBoundObject>(0x0000003B);  // Skyrim.esm XMarker
+        if (!player || !xMarker) {
+            log::error("{}: cannot create freeform aim marker", __FUNCTION__);
+            return nullptr;
+        }
+
+        auto placed = player->PlaceObjectAtMe(xMarker, false);
+        if (!placed) {
+            log::error("{}: PlaceObjectAtMe failed", __FUNCTION__);
+            return nullptr;
+        }
+
+        m_freeformMarker = placed->GetHandle();
+        return placed.get();
+    }
+
+    void CombatManager::UpdateFreeformMarker() {
+        if (!m_freeformMarker) {
+            return;
+        }
+        auto ref = m_freeformMarker.get();
+        if (ref) {
+            ref->SetPosition(GetFreeformAimPoint());
+        }
+    }
+
+    void CombatManager::ReleaseFreeformMarker() {
+        // must run on the main thread (called from TaskInterface tasks only)
+        // The marker only lives for the duration of one commanded attack, so no references pile up in the save.
+        if (m_freeformMarker) {
+            if (auto ref = m_freeformMarker.get()) {
+                ref->Disable();
+                ref->SetDelete(true);
+            }
+        }
+        m_freeformMarker = RE::ObjectRefHandle{};
+    }
+
+    /******************************************************************************************/
 
     void CombatManager::UpdateCombat() {
 
@@ -222,15 +306,21 @@ log::info("{}: Updated player cell to {}, {}", __FUNCTION__, targetCellX, target
             m_shoutTarget = RE::ActorHandle{};
             m_shoutTimer = 0.0f;
         if (attackStopped) {
+            bool wasFreeform = m_isFreeformShout;
+            m_isFreeformShout = false;
             auto* dragonActor = DataManager::GetSingleton().GetDragonActor();
             if (dragonActor) {
-                SKSE::GetTaskInterface()->AddTask([dragonActor]() {
+                SKSE::GetTaskInterface()->AddTask([this, dragonActor, wasFreeform]() {
                     // When modifying Game objects, send task to TaskInterface to ensure thread safety
                     _ts_SKSEFunctions::ClearLookAt(dragonActor);
+                    if (wasFreeform) {
+                        // [freeform-breath] look-at is cleared first, then the marker is removed
+                        this->ReleaseFreeformMarker();
+                    }
                     });
                 }
             }
-        }          
+        }
     }
     
     bool CombatManager::DragonAttack(bool a_alternateAttack)
@@ -261,7 +351,13 @@ log::info("{}: Updated player cell to {}, {}", __FUNCTION__, targetCellX, target
         bool isAlternateAttack = a_alternateAttack;
         m_shoutTimer = 0.0f;
         m_shoutActive = true;
-                 
+
+        // [freeform-breath] In freeform mode the only way to get an actor target is a deliberate
+        // TDM target lock. Otherwise there is no target at all: no reticle pick, no combat-target
+        // fallback, no stored fast-travel target. The breath goes where the camera points.
+        const bool freeformMode = TargetReticleManager::GetSingleton().IsFreeformMode();
+        m_isFreeformShout = false;
+
         m_shoutTarget = RE::ActorHandle{};
         if (APIs::TrueDirectionalMovementV1 && APIs::TrueDirectionalMovementV1->GetTargetLockState()
             && !TargetReticleManager::GetSingleton().IsReticleLocked()) {
@@ -271,7 +367,7 @@ log::info("{}: Updated player cell to {}, {}", __FUNCTION__, targetCellX, target
             }
         }
 
-        if (!m_shoutTarget) {
+        if (!m_shoutTarget && !freeformMode) {
             // No TDM target, get the combat target from the reticle (if active)
             if (auto handle = TargetReticleManager::GetSingleton().GetCurrentTarget()) {
                 m_shoutTarget = handle;
@@ -281,9 +377,14 @@ log::info("{}: Updated player cell to {}, {}", __FUNCTION__, targetCellX, target
         RE::Actor* currentCombatTarget = _ts_SKSEFunctions::GetCombatTarget(dragonActor);
 
         if (!m_shoutTarget) {
-            // if no target from TDM or Reticle, use current combat target (if any)
-            m_shoutTarget = currentCombatTarget ? currentCombatTarget->GetHandle() : RE::ActorHandle{};
-            resolvedShoutTarget = currentCombatTarget;
+            if (freeformMode) {
+                m_isFreeformShout = true;
+                resolvedShoutTarget = nullptr;
+            } else {
+                // if no target from TDM or Reticle, use current combat target (if any)
+                m_shoutTarget = currentCombatTarget ? currentCombatTarget->GetHandle() : RE::ActorHandle{};
+                resolvedShoutTarget = currentCombatTarget;
+            }
         } else if (resolvedShoutTarget != currentCombatTarget) {
             DragonStartCombat(resolvedShoutTarget);
         }
@@ -298,7 +399,7 @@ log::info("{}: Updated player cell to {}, {}", __FUNCTION__, targetCellX, target
             // (in FastTravel mode, dragon's combat state is always 0)
             m_isFastTravelAttack = true;
 
-            if (!resolvedShoutTarget) {
+            if (!resolvedShoutTarget && !m_isFreeformShout) {
                 resolvedShoutTarget = m_storedCombatTarget ? m_storedCombatTarget.get().get() : nullptr;
                 m_shoutTarget = m_storedCombatTarget;
             }
@@ -315,7 +416,9 @@ log::info("{}: Updated player cell to {}, {}", __FUNCTION__, targetCellX, target
         }
 
         std::string displayMessage = "Commanding Attack";
-        if (resolvedShoutTarget) {
+        if (m_isFreeformShout) {
+            displayMessage = "Commanding Breath";
+        } else if (resolvedShoutTarget) {
             // Display attack notification
             displayMessage += " on ";
             displayMessage += std::string(resolvedShoutTarget->GetName());
@@ -327,6 +430,7 @@ log::info("{}: Updated player cell to {}, {}", __FUNCTION__, targetCellX, target
         }
 
         bool useUnrelentingForce = dragonActor->HasShout(m_unrelentingForceShout) && (isAlternateAttack || controlsManager.GetIsKeyPressed(IDRCKey::kRun));
+        // [freeform-breath] with no target the 2000-unit default picks the dragon's normal-range breath
         float targetDistance = resolvedShoutTarget ? _ts_SKSEFunctions::GetDistance(dragonActor, resolvedShoutTarget) : 2000.0f;
         SetActiveShout(targetDistance, useUnrelentingForce);
 
@@ -356,7 +460,15 @@ log::info("{}: Updated player cell to {}, {}", __FUNCTION__, targetCellX, target
             auto* taskShoutTarget = this->m_shoutTarget ? this->m_shoutTarget.get().get() : nullptr;
             if (taskShoutTarget) {
                 _ts_SKSEFunctions::SetLookAt(dragonActor, taskShoutTarget, true);
+            } else if (this->m_isFreeformShout) {
+                // [freeform-breath] point the head at an invisible marker on the camera's aim line.
+                // The marker is kept on the aim point every frame in Update() and removed when the shout ends.
+                if (auto* marker = this->GetOrCreateFreeformMarker()) {
+                    marker->SetPosition(this->GetFreeformAimPoint());
+                    _ts_SKSEFunctions::SetLookAt(dragonActor, marker, kFreeformTurnBody);
+                }
             }
+            // target stays nullptr in freeform mode; the projectile direction is set in ProjectileLaunchHook
             StartVoiceShoutCast(static_cast<RE::Character*>(dragonActor), this->m_attackShout, 2, taskShoutTarget);
         });
     }

@@ -220,9 +220,7 @@ event OnConfigInit()
 	TDMLockList = new string[2]
 	TDMLockList[0] = "TDM Target"
 	TDMLockList[1] = "IDRC Target"
-	PrimaryTargetModeList = new string[2]
-	PrimaryTargetModeList[0] = "From Screen Center"
-	PrimaryTargetModeList[1] = "Current Combat Target"
+	BuildPrimaryTargetModeList()
 	fMaxTargetDistance = 8000.0
 	fDistanceMultiplierSmall = 1.0
 	fDistanceMultiplierLarge = 2.0
@@ -393,7 +391,20 @@ Event OnOptionDefault(int option)
 
 endevent
 
+; [freeform-breath] Index 2 maps to TargetMode::kFreeform (=3) in the DLL (SetPrimaryTargetMode_SKSE adds 1).
+function BuildPrimaryTargetModeList()
+	PrimaryTargetModeList = new string[3]
+	PrimaryTargetModeList[0] = "From Screen Center"
+	PrimaryTargetModeList[1] = "Current Combat Target"
+	PrimaryTargetModeList[2] = "Freeform (Camera Aim)"
+endFunction
+
 function OnPageReset(String page)
+	; [freeform-breath] OnConfigInit only runs once per save, so saves made before this patch still
+	; hold the old 2-entry list. Rebuild it here so the new option shows up without a new game.
+	if PrimaryTargetModeList.Length < 3
+		BuildPrimaryTargetModeList()
+	endIf
 
 	if page == "Dragon Ride Controls"
 		SetCursorFillMode(LEFT_TO_RIGHT)
@@ -722,7 +733,7 @@ function OnOptionHighlight(Int option)
 	elseif option == iTDMLock_OID
 		SetInfoText("Defines which target the True Directional Movement (TDM) Target Lock focuses on when activated.")
 	elseif option == iPrimaryTargetMode_OID
-		SetInfoText(" The primary target for the the dragon's next commanded attack. The other option is the fallback in case no primary target exists.")
+		SetInfoText(" The primary target for the the dragon's next commanded attack. The other option is the fallback in case no primary target exists. Freeform (Camera Aim): no target is picked at all - the dragon breathes wherever the camera points (a TDM target lock still overrides).")
 	elseif option == iMaxTargetDistance_OID
 		SetInfoText("The maximum distance for targeting. If set to 0, the search range is not limited.")
 	elseif option == iDistanceMultiplierSmall_OID
