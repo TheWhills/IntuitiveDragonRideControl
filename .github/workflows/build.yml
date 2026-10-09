@@ -17,10 +17,11 @@ jobs:
       VCPKG_BINARY_SOURCES: clear;x-gha,readwrite
 
     steps:
-      # CMakeLists.txt expects TS_SKSEFunctions in a sibling folder named TS_SKSEFunctions-main
+      # CMakeLists.txt expects TS_SKSEFunctions in a sibling folder named TS_SKSEFunctions-main.
+      # IDRC itself goes in a short folder: long paths break the MSVC 250-char object-path limit.
       - uses: actions/checkout@v4
         with:
-          path: IntuitiveDragonRideControl-main
+          path: idrc
 
       - uses: actions/checkout@v4
         with:
@@ -59,20 +60,24 @@ jobs:
         with:
           arch: x64
 
+      # msvc-dev-cmd points VCPKG_ROOT at Visual Studio's bundled vcpkg; use our checkout instead
+      - name: Restore VCPKG_ROOT
+        run: Add-Content $env:GITHUB_ENV "VCPKG_ROOT=${{ github.workspace }}\vcpkg"
+
       - name: Point output folder at the workspace
-        working-directory: IntuitiveDragonRideControl-main
+        working-directory: idrc
         run: |
           $out = ("${{ github.workspace }}\out\IDRC Freeform") -replace '\\', '/'
           (Get-Content CMakeLists.txt) -replace 'set\(OUTPUT_FOLDER ".*"\)', "set(OUTPUT_FOLDER `"$out`")" | Set-Content CMakeLists.txt
 
       - name: Configure
-        working-directory: IntuitiveDragonRideControl-main
+        working-directory: idrc
         run: |
-          cmake --preset release 2>&1 | Tee-Object -FilePath "${{ github.workspace }}\configure.log"
+          cmake --preset release "-DVCPKG_INSTALL_OPTIONS=--x-buildtrees-root=C:/vb" 2>&1 | Tee-Object -FilePath "${{ github.workspace }}\configure.log"
           exit $LASTEXITCODE
 
       - name: Build
-        working-directory: IntuitiveDragonRideControl-main
+        working-directory: idrc
         run: |
           cmake --build build/release 2>&1 | Tee-Object -FilePath "${{ github.workspace }}\build.log"
           exit $LASTEXITCODE
